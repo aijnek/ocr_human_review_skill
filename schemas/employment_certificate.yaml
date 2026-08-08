@@ -1,0 +1,55 @@
+name: employment_certificate
+title: 在籍証明書
+description: >
+  保育士等の在籍証明書（勤務証明書・就労証明書を含む）から、対象者の氏名・
+  勤務先・在籍期間などを抽出する。
+fields:
+  - key: person_name
+    label: 氏名
+    type: string
+    required: true
+    hint: 証明対象者の氏名。ふりがなではなく漢字表記を優先する。
+  - key: birth_date
+    label: 生年月日
+    type: date
+    required: false
+    hint: YYYY-MM-DD 形式に正規化する。和暦は西暦に変換する。
+  - key: facility_name
+    label: 施設名
+    type: string
+    required: true
+    hint: 勤務先の保育園・施設・法人の名称。
+  - key: facility_address
+    label: 施設所在地
+    type: string
+    required: false
+  - key: job_title
+    label: 職種
+    type: string
+    required: false
+    hint: 例. 保育士、主任保育士、園長。
+  - key: employment_start
+    label: 在籍期間（開始）
+    type: date
+    required: true
+    hint: YYYY-MM-DD 形式に正規化する。和暦は西暦に変換する。
+  - key: employment_end
+    label: 在籍期間（終了）
+    type: date
+    required: false
+    hint: 在職中・現在も勤務中の場合は空欄とし、evidence にその旨を書く。
+  - key: employment_type
+    label: 雇用形態
+    type: string
+    required: false
+    hint: 例. 正規職員、常勤、非常勤、パート。
+  - key: issue_date
+    label: 発行日
+    type: date
+    required: true
+    hint: YYYY-MM-DD 形式に正規化する。和暦は西暦に変換する。
+  - key: issuer_name
+    label: 発行者
+    type: string
+    required: true
+    hint: 証明書を発行した施設長・法人代表者の役職と氏名。

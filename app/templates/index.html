@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}受信箱 - OCR Human Review{% endblock %}
+{% block content %}
+<h1>文書のアップロード</h1>
+<div id="dropzone" class="dropzone">
+  <p>PDF / PNG / JPEG をここにドラッグ&ドロップ</p>
+  <p class="muted">またはクリックしてファイルを選択</p>
+  <input id="file-input" type="file" multiple accept=".pdf,.png,.jpg,.jpeg" hidden>
+</div>
+<div id="upload-status" class="muted"></div>
+
+<h1>受信箱</h1>
+<table class="table" id="doc-table">
+  <thead>
+    <tr><th>ID</th><th>ファイル名</th><th>ステータス</th><th>登録日時</th><th></th></tr>
+  </thead>
+  <tbody id="doc-rows"></tbody>
+</table>
+<p id="doc-empty" class="muted" hidden>まだ文書がありません。上からアップロードしてください。</p>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('file-input');
+const uploadStatus = document.getElementById('upload-status');
+
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('dragover');
+  uploadFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', () => uploadFiles(fileInput.files));
+
+async function uploadFiles(files) {
+  if (!files.length) return;
+  const form = new FormData();
+  for (const f of files) form.append('files', f);
+  uploadStatus.textContent = 'アップロード中…';
+  try {
+    const res = await fetch('/api/upload', { method: 'POST', body: form });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    uploadStatus.textContent = 'アップロードしました。エージェントがOCRを開始します。';
+    fileInput.value = '';
+    refreshDocs();
+  } catch (err) {
+    uploadStatus.textContent = 'エラー: ' + err.message;
+  }
+}
+
+async function refreshDocs() {
+  const data = await fetchJSON('/api/documents');
+  const rows = document.getElementById('doc-rows');
+  const empty = document.getElementById('doc-empty');
+  empty.hidden = data.documents.length > 0;
+  rows.innerHTML = data.documents.map(d => `
+    <tr>
+      <td>${d.id}</td>
+      <td>${esc(d.filename)}</td>
+      <td>${statusBadge(d.status)}${d.error ? `<div class="error-note">${esc(d.error)}</div>` : ''}</td>
+      <td>${esc(d.created_at)}</td>
+      <td>${d.status === 'awaiting_review' ? `<a class="btn btn-primary btn-sm" href="/review/${d.id}">レビュー</a>`
+           : d.status === 'confirmed' ? `<a class="btn btn-ghost btn-sm" href="/review/${d.id}">表示</a>` : ''}</td>
+    </tr>`).join('');
+}
+
+refreshDocs();
+setInterval(refreshDocs, 2000);
+</script>
+{% endblock %}

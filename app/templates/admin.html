@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}管理 - OCR Human Review{% endblock %}
+{% block content %}
+<h1>確定データ管理</h1>
+<p class="muted">確定済みレコードの確認・編集・削除ができます。</p>
+<div class="table-scroll">
+  <table class="table" id="rec-table">
+    <thead><tr id="rec-head"></tr></thead>
+    <tbody id="rec-rows"></tbody>
+  </table>
+</div>
+<p id="rec-empty" class="muted" hidden>確定済みレコードはまだありません。</p>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let SCHEMA_FIELDS = [];
+let editingId = null;
+
+async function refresh() {
+  const data = await fetchJSON('/api/records');
+  SCHEMA_FIELDS = data.schema.fields;
+  document.getElementById('rec-head').innerHTML =
+    '<th>ID</th>' + SCHEMA_FIELDS.map(f => `<th>${esc(f.label)}</th>`).join('') +
+    '<th>元ファイル</th><th>更新日時</th><th></th>';
+  const rows = document.getElementById('rec-rows');
+  document.getElementById('rec-empty').hidden = data.records.length > 0;
+  rows.innerHTML = data.records.map(r => renderRow(r)).join('');
+}
+
+function renderRow(r) {
+  const editing = r.id === editingId;
+  const cells = SCHEMA_FIELDS.map(f => editing
+    ? `<td><input data-key="${f.key}" data-rec="${r.id}" type="text" value="${esc(r.data[f.key] ?? '')}"></td>`
+    : `<td>${esc(r.data[f.key] ?? '')}</td>`).join('');
+  const actions = editing
+    ? `<button class="btn btn-primary btn-sm" onclick="saveRow(${r.id})">保存</button>
+       <button class="btn btn-ghost btn-sm" onclick="cancelEdit()">取消</button>`
+    : `<button class="btn btn-ghost btn-sm" onclick="startEdit(${r.id})">編集</button>
+       <button class="btn btn-danger btn-sm" onclick="deleteRow(${r.id})">削除</button>`;
+  return `<tr>
+    <td>${r.id}</td>${cells}
+    <td>${r.document_id ? `<a href="/review/${r.document_id}">${esc(r.filename ?? '')}</a>` : esc(r.filename ?? '')}</td>
+    <td>${esc(r.updated_at)}</td>
+    <td class="nowrap">${actions}</td>
+  </tr>`;
+}
+
+function startEdit(id) { editingId = id; refresh(); }
+function cancelEdit() { editingId = null; refresh(); }
+
+async function saveRow(id) {
+  const data = {};
+  document.querySelectorAll(`input[data-rec="${id}"]`).forEach(i => data[i.dataset.key] = i.value.trim());
+  await fetch(`/api/records/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data }),
+  });
+  editingId = null;
+  refresh();
+}
+
+async function deleteRow(id) {
+  if (!confirm(`レコード #${id} を削除します。よろしいですか?`)) return;
+  await fetch(`/api/records/${id}`, { method: 'DELETE' });
+  refresh();
+}
+
+refresh();
+</script>
+{% endblock %}

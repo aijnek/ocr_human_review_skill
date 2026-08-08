@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}レビュー #{{ doc.id }} - OCR Human Review{% endblock %}
+{% block content %}
+<div class="review-header">
+  <h1>レビュー: {{ doc.filename }}</h1>
+  <span id="doc-status"></span>
+</div>
+
+<div id="ocr-waiting" class="notice" hidden>
+  <span class="spinner"></span> エージェントがOCR処理中です。完了すると自動で表示されます…
+</div>
+
+<div id="review-layout" class="review-layout" hidden>
+  <div class="preview-pane" id="preview-pane"></div>
+  <div class="fields-pane">
+    <h2>抽出結果 <span class="muted">({{ schema.title }})</span></h2>
+    <p class="muted">確度が低いフィールドは赤/黄で表示されます。値を確認・修正して確定してください。</p>
+    <div id="fields"></div>
+    <div class="confirm-row">
+      <button id="btn-confirm" class="btn btn-primary">確定して保存</button>
+      <span id="confirm-status"></span>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const DOC_ID = {{ doc.id }};
+const SCHEMA_FIELDS = {{ schema.fields | tojson }};
+
+function confidenceClass(c) {
+  if (c === null || c === undefined) return 'conf-unknown';
+  if (c >= 0.9) return 'conf-high';
+  if (c >= 0.7) return 'conf-mid';
+  return 'conf-low';
+}
+function confidenceLabel(c) {
+  return (c === null || c === undefined) ? '-' : Math.round(c * 100) + '%';
+}
+
+let loaded = false;
+async function load() {
+  const data = await fetchJSON(`/api/documents/${DOC_ID}`);
+  const doc = data.document;
+  document.getElementById('doc-status').innerHTML = statusBadge(doc.status);
+
+  const waiting = ['uploaded', 'ocr_running'].includes(doc.status);
+  document.getElementById('ocr-waiting').hidden = !waiting;
+  if (waiting) return;   // ポーリング継続、抽出完了後に描画
+
+  if (loaded) return;    // 一度描画したら再描画しない(編集中の値を守る)
+  loaded = true;
+  document.getElementById('review-layout').hidden = false;
+
+  // 左: プレビュー
+  const pane = document.getElementById('preview-pane');
+  pane.innerHTML = Array.from({ length: data.page_count }, (_, i) =>
+    `<img src="/api/documents/${DOC_ID}/preview/${i + 1}" alt="page ${i + 1}">`).join('');
+
+  // 右: フィールドフォーム
+  const byKey = Object.fromEntries(data.extractions.map(e => [e.field_key, e]));
+  document.getElementById('fields').innerHTML = SCHEMA_FIELDS.map(f => {
+    const e = byKey[f.key] || {};
+    const value = e.value_corrected ?? e.value_extracted ?? '';
+    return `
+      <div class="field-row ${confidenceClass(e.confidence)}">
+        <div class="field-head">
+          <label for="field-${f.key}">${esc(f.label)}${f.required ? ' *' : ''}</label>
+          <span class="conf-badge" title="エージェントの確度">${confidenceLabel(e.confidence)}</span>
+        </div>
+        <input id="field-${f.key}" data-key="${f.key}" type="text" value="${esc(value)}">
+        ${e.evidence ? `<div class="evidence" title="根拠">📌 ${esc(e.evidence)}</div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+document.getElementById('btn-confirm').addEventListener('click', async () => {
+  const fields = {};
+  document.querySelectorAll('#fields input[data-key]').forEach(i => fields[i.dataset.key] = i.value.trim());
+  const missing = SCHEMA_FIELDS.filter(f => f.required && !fields[f.key]).map(f => f.label);
+  if (missing.length && !confirm(`必須フィールドが未入力です: ${missing.join('、')}\nこのまま確定しますか?`)) return;
+  const status = document.getElementById('confirm-status');
+  try {
+    const res = await fetch(`/api/documents/${DOC_ID}/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    status.innerHTML = '✅ 保存しました。<a href="/admin">管理画面で確認</a>';
+    document.getElementById('doc-status').innerHTML = statusBadge('confirmed');
+  } catch (err) {
+    status.textContent = 'エラー: ' + err.message;
+  }
+});
+
+load();
+setInterval(load, 2000);
+</script>
+{% endblock %}
