@@ -32,6 +32,9 @@ DEFAULT_SCHEMA = "employment_certificate"
 # UI の「セッション終了」ボタンで立ち、poll 中のエージェントに shutdown を返す
 shutdown_requested = False
 
+# 現在 /api/agent/jobs/next で待機中のワーカー数 (UI の「エージェント未接続」警告に使う)
+active_pollers = 0
+
 
 @app.on_event("startup")
 def startup() -> None:
@@ -275,46 +278,55 @@ def api_status():
         queued = conn.execute(
             "SELECT COUNT(*) AS n FROM jobs WHERE status IN ('queued', 'running')"
         ).fetchone()["n"]
-    return {"shutdown_requested": shutdown_requested, "active_jobs": queued}
+    return {
+        "shutdown_requested": shutdown_requested,
+        "active_jobs": queued,
+        "agent_connected": active_pollers > 0,
+    }
 
 
 # ---------------------------------------------------------------- agent API
 
 @app.get("/api/agent/jobs/next")
 async def api_agent_next_job(wait: int = 230):
-    global shutdown_requested
+    global shutdown_requested, active_pollers
     deadline = asyncio.get_event_loop().time() + min(wait, 590)
-    while True:
-        if shutdown_requested:
-            # 一度返したらリセットする (サーバーが残っても次回セッションを妨げない)
-            shutdown_requested = False
-            return {"status": "shutdown"}
-        with db.get_conn() as conn:
-            row = conn.execute(
-                "SELECT * FROM jobs WHERE status = 'queued' ORDER BY id LIMIT 1"
-            ).fetchone()
-            if row is not None:
-                conn.execute(
-                    "UPDATE jobs SET status = 'running',"
-                    " updated_at = datetime('now', 'localtime') WHERE id = ?",
-                    (row["id"],),
-                )
-                if row["type"] == "ocr":
-                    doc_id = json.loads(row["payload_json"])["document_id"]
+    active_pollers += 1
+    try:
+        while True:
+            if shutdown_requested:
+                # 一度返したらリセットする (サーバーが残っても次回セッションを妨げない)
+                shutdown_requested = False
+                return {"status": "shutdown"}
+            with db.get_conn() as conn:
+                row = conn.execute(
+                    "SELECT * FROM jobs WHERE status = 'queued' ORDER BY id LIMIT 1"
+                ).fetchone()
+                if row is not None:
                     conn.execute(
-                        "UPDATE documents SET status = 'ocr_running' WHERE id = ?", (doc_id,)
+                        "UPDATE jobs SET status = 'running',"
+                        " updated_at = datetime('now', 'localtime') WHERE id = ?",
+                        (row["id"],),
                     )
-                return {
-                    "status": "job",
-                    "job": {
-                        "id": row["id"],
-                        "type": row["type"],
-                        "payload": json.loads(row["payload_json"]),
-                    },
-                }
-        if asyncio.get_event_loop().time() >= deadline:
-            return {"status": "timeout"}
-        await asyncio.sleep(0.5)
+                    if row["type"] == "ocr":
+                        doc_id = json.loads(row["payload_json"])["document_id"]
+                        conn.execute(
+                            "UPDATE documents SET status = 'ocr_running' WHERE id = ?",
+                            (doc_id,),
+                        )
+                    return {
+                        "status": "job",
+                        "job": {
+                            "id": row["id"],
+                            "type": row["type"],
+                            "payload": json.loads(row["payload_json"]),
+                        },
+                    }
+            if asyncio.get_event_loop().time() >= deadline:
+                return {"status": "timeout"}
+            await asyncio.sleep(0.5)
+    finally:
+        active_pollers -= 1
 
 
 @app.post("/api/agent/jobs/{job_id}/complete")

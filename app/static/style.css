@@ -38,6 +38,13 @@ h2 { font-size: 1.1rem; margin: 0 0 0.5rem; }
 .topbar .btn-ghost { color: #cbd5e1; border-color: #475569; }
 .btn-danger { background: #dc2626; color: #fff; }
 
+/* agent banner */
+.agent-banner {
+  background: #fef3c7; border: 1px solid #fcd34d; color: #92400e;
+  border-radius: 10px; padding: 0.7rem 1rem; margin-top: 1rem; font-size: 0.9rem;
+}
+.chat-pending-warn { color: #b45309; }
+
 /* dropzone */
 .dropzone {
   border: 2px dashed #94a3b8; border-radius: 12px; background: #fff;

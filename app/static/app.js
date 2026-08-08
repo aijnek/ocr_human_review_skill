@@ -31,6 +31,20 @@ document.getElementById('btn-shutdown').addEventListener('click', async () => {
   alert('終了をリクエストしました。エージェントは次のポーリングで停止します。');
 });
 
+// ---- エージェント接続状態 ----
+let agentConnected = true;
+
+async function refreshStatus() {
+  try {
+    const status = await fetchJSON('/api/status');
+    agentConnected = status.agent_connected;
+    document.getElementById('agent-banner').hidden =
+      agentConnected || status.active_jobs === 0;
+  } catch { /* サーバー停止中はバナー判定不能なので何もしない */ }
+}
+refreshStatus();
+setInterval(refreshStatus, 2000);
+
 // ---- チャットウィジェット ----
 const chatWidget = document.getElementById('chat-widget');
 const chatMessages = document.getElementById('chat-messages');
@@ -61,6 +75,13 @@ async function refreshChat() {
   const data = await fetchJSON('/api/chat');
   const pending = data.messages.some(m => m.pending);
   chatPending.hidden = !pending;
+  if (pending && !agentConnected) {
+    chatPending.textContent = '⚠ エージェントが接続していません。skill を起動すると回答されます。';
+    chatPending.classList.add('chat-pending-warn');
+  } else {
+    chatPending.textContent = 'エージェントが回答中…';
+    chatPending.classList.remove('chat-pending-warn');
+  }
   if (data.messages.length === lastChatCount) return;
   lastChatCount = data.messages.length;
   chatMessages.innerHTML = data.messages.map(m => `
