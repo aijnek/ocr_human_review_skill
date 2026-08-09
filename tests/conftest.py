@@ -45,7 +45,7 @@ def _clean_state():
 
 @pytest.fixture
 def client():
-    with TestClient(main.app) as c:  # context manager にすることで startup() が走る
+    with TestClient(main.app) as c:  # context manager にすることで lifespan が走る
         yield c
 
 

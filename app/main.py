@@ -8,6 +8,8 @@ import asyncio
 import hashlib
 import json
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
@@ -17,7 +19,14 @@ from fastapi.templating import Jinja2Templates
 
 from . import db, pdf_render, schemas
 
-app = FastAPI(title="OCR Human Review")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    db.init_db()
+    yield
+
+
+app = FastAPI(title="OCR Human Review", lifespan=lifespan)
 
 BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -33,11 +42,6 @@ DEFAULT_SCHEMA = "employment_certificate"
 
 # UI の「セッション終了」ボタンで立ち、poll 中のエージェントに shutdown を返す
 shutdown_requested = False
-
-
-@app.on_event("startup")
-def startup() -> None:
-    db.init_db()
 
 
 # ---------------------------------------------------------------- pages

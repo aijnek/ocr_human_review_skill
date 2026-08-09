@@ -2,6 +2,8 @@
 
 import os
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -66,8 +68,18 @@ def init_db() -> None:
         conn.executescript(SCHEMA_SQL)
 
 
-def get_conn() -> sqlite3.Connection:
+@contextmanager
+def get_conn() -> Iterator[sqlite3.Connection]:
+    """`with get_conn() as conn:` で使う。抜けるときに commit (例外なら rollback) して閉じる。
+
+    sqlite3.Connection の __exit__ は commit/rollback するだけで close はしないので、
+    接続を直接 with に渡すとリクエストごとに接続が漏れる。
+    """
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
