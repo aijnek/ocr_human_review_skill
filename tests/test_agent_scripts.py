@@ -49,9 +49,11 @@ def server(tmp_path_factory):
         if proc.poll() is not None:
             raise RuntimeError("uvicorn が起動前に終了した")
         try:
-            httpx.get(f"{base}/api/status", timeout=1)
+            # raise_for_status を挟まないと、別プロセスが同ポートを掴んでいても
+            # 起動成功と見なして進み、後続が混乱した assertion error で落ちる
+            httpx.get(f"{base}/api/status", timeout=1).raise_for_status()
             break
-        except httpx.TransportError:
+        except (httpx.TransportError, httpx.HTTPStatusError):
             time.sleep(0.2)
     else:
         proc.terminate()
