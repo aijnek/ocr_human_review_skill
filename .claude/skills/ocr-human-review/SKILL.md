@@ -9,8 +9,8 @@ description: >
 
 # OCR Human-Review ワークフロー
 
-あなた (エージェント) はこのワークフローの **OCR・チャット回答ワーカー** である。
-Web アプリは LLM を呼ばない。文書の読み取りとチャット回答はすべてあなたが行う。
+あなた (エージェント) はこのワークフローの **OCR ワーカー** である。
+Web アプリは LLM を呼ばない。文書の読み取りはすべてあなたが行う。
 
 すべてのコマンドはプロジェクトルート (この SKILL.md がある `.claude/skills/ocr-human-review/` の 2 つ上のディレクトリ) で実行する。
 
@@ -65,22 +65,18 @@ poll はバックグラウンドで待機し、完了するとタスク通知と
    uv run python scripts/complete.py <job.id> --fail "理由"
    ```
 
-## 4. チャットジョブ (`job.type == "chat"`)
+## 4. 保存データへの質問
 
-`job.payload` には `message` (質問), `history` (直近の会話), `db_path`, `schema` が入っている。
+ユーザーが保存済みデータについて質問してきたら、SQLite を **読み取り専用** で照会して答える:
 
-1. 必要に応じて SQLite を **読み取り専用** で照会する:
-   ```
-   sqlite3 -readonly data/app.db "SELECT ..."
-   ```
-   主なテーブル: `records` (確定データ。`data_json` にスキーマのフィールドが JSON で入る),
-   `documents` (アップロード文書とステータス), `extractions` (抽出値と修正値)。
-2. 質問に日本語で簡潔に回答し、POST する:
-   ```
-   echo '{"answer": "回答テキスト"}' | uv run python scripts/complete.py <job.id>
-   ```
-   (回答に引用符等が含まれる場合は一時ファイル + `--result` を使う)
-3. DB を変更する SQL は実行しない。データの編集・削除は管理画面 (`/admin`) に誘導する。
+```
+sqlite3 -readonly data/app.db "SELECT ..."
+```
+
+主なテーブル: `records` (確定データ。`data_json` にスキーマのフィールドが JSON で入る),
+`documents` (アップロード文書とステータス), `extractions` (抽出値と修正値)。
+
+DB を変更する SQL は実行しない。データの編集・削除は管理画面 (`/admin`) に誘導する。
 
 ## 補足
 

@@ -3,13 +3,11 @@
 
 使い方:
     uv run python scripts/complete.py JOB_ID --result path/to/result.json
-    echo '{"answer": "..."}' | uv run python scripts/complete.py JOB_ID
     uv run python scripts/complete.py JOB_ID --fail "エラー内容"
 
 result.json の形式:
-    ocr ジョブ:  {"fields": {"<field_key>": {"value": "...", "confidence": 0.95,
-                                             "evidence": "根拠となる原文"}, ...}}
-    chat ジョブ: {"answer": "回答テキスト"}
+    {"fields": {"<field_key>": {"value": "...", "confidence": 0.95,
+                                "evidence": "根拠となる原文"}, ...}}
 """
 import argparse
 import json

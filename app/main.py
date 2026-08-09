@@ -1,6 +1,6 @@
 """OCR Human-Review ローカル Web アプリ。
 
-LLM は一切呼ばない。OCR・チャット回答はジョブキュー (jobs テーブル) に積み、
+LLM は一切呼ばない。OCR はジョブキュー (jobs テーブル) に積み、
 Claude Code エージェントが scripts/poll.py 経由で処理して結果を POST してくる。
 """
 import asyncio
@@ -227,42 +227,6 @@ def api_record_delete(record_id: int):
     return {"ok": True}
 
 
-# ---------------------------------------------------------------- chat
-
-@app.post("/api/chat")
-async def api_chat(request: Request):
-    body = await request.json()
-    message = (body.get("message") or "").strip()
-    if not message:
-        raise HTTPException(400, "メッセージが空です")
-    with db.get_conn() as conn:
-        conn.execute(
-            "INSERT INTO chat_messages (role, content, pending) VALUES ('user', ?, 1)",
-            (message,),
-        )
-        history = conn.execute(
-            "SELECT role, content FROM chat_messages ORDER BY id DESC LIMIT 20"
-        ).fetchall()
-        payload = {
-            "message": message,
-            "history": [dict(r) for r in reversed(history)],
-            "db_path": str(db.DB_PATH),
-            "schema": schemas.load_schema(DEFAULT_SCHEMA),
-        }
-        conn.execute(
-            "INSERT INTO jobs (type, payload_json) VALUES ('chat', ?)",
-            (json.dumps(payload, ensure_ascii=False),),
-        )
-    return {"ok": True}
-
-
-@app.get("/api/chat")
-def api_chat_messages():
-    with db.get_conn() as conn:
-        rows = conn.execute("SELECT * FROM chat_messages ORDER BY id").fetchall()
-    return {"messages": [dict(r) for r in rows]}
-
-
 # ---------------------------------------------------------------- session control
 
 @app.post("/api/shutdown")
@@ -361,14 +325,6 @@ async def api_agent_complete(job_id: int, request: Request):
                 "UPDATE documents SET status = 'awaiting_review', error = NULL WHERE id = ?",
                 (doc_id,),
             )
-        elif job["type"] == "chat":
-            answer = (result.get("answer") or "").strip()
-            if not answer:
-                raise HTTPException(400, "chat 結果には answer が必要です")
-            conn.execute(
-                "INSERT INTO chat_messages (role, content) VALUES ('agent', ?)", (answer,)
-            )
-            conn.execute("UPDATE chat_messages SET pending = 0 WHERE pending = 1")
 
         conn.execute(
             "UPDATE jobs SET status = 'done', result_json = ?,"
@@ -397,12 +353,6 @@ async def api_agent_fail(job_id: int, request: Request):
                 "UPDATE documents SET status = 'error', error = ? WHERE id = ?",
                 (error, payload["document_id"]),
             )
-        elif job["type"] == "chat":
-            conn.execute(
-                "INSERT INTO chat_messages (role, content) VALUES ('agent', ?)",
-                (f"(エラー: {error})",),
-            )
-            conn.execute("UPDATE chat_messages SET pending = 0 WHERE pending = 1")
     return {"ok": True}
 
 

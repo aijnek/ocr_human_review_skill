@@ -25,20 +25,6 @@
     {% block content %}{% endblock %}
   </main>
 
-  <!-- チャットウィジェット -->
-  <div id="chat-widget" class="chat-widget collapsed">
-    <button id="chat-toggle" class="chat-toggle">💬 データについて質問</button>
-    <div class="chat-panel">
-      <div class="chat-header">保存データ Q&A</div>
-      <div id="chat-messages" class="chat-messages"></div>
-      <div id="chat-pending" class="chat-pending" hidden>エージェントが回答中…</div>
-      <form id="chat-form" class="chat-input-row">
-        <input id="chat-input" type="text" placeholder="例: 確定済みの証明書は何件?" autocomplete="off">
-        <button type="submit" class="btn btn-primary">送信</button>
-      </form>
-    </div>
-  </div>
-
   <script src="/static/app.js"></script>
   {% block scripts %}{% endblock %}
 </body>

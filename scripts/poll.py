@@ -5,7 +5,7 @@
     uv run python scripts/poll.py --timeout 230
 
 出力 (JSON):
-    {"status": "job", "job": {"id": ..., "type": "ocr"|"chat", "payload": {...}}}
+    {"status": "job", "job": {"id": ..., "type": "ocr", "payload": {...}}}
     {"status": "timeout"}            # ジョブなし。再実行してよい
     {"status": "shutdown"}           # UI から終了指示。ループを抜ける
     {"status": "server_unreachable"} # サーバー未起動/停止

@@ -1,4 +1,4 @@
-// 共通ヘルパー + チャットウィジェット + セッション終了ボタン
+// 共通ヘルパー + セッション終了ボタン
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c =>
@@ -32,63 +32,12 @@ document.getElementById('btn-shutdown').addEventListener('click', async () => {
 });
 
 // ---- エージェント接続状態 ----
-let agentConnected = true;
-
 async function refreshStatus() {
   try {
     const status = await fetchJSON('/api/status');
-    agentConnected = status.agent_connected;
     document.getElementById('agent-banner').hidden =
-      agentConnected || status.active_jobs === 0;
+      status.agent_connected || status.active_jobs === 0;
   } catch { /* サーバー停止中はバナー判定不能なので何もしない */ }
 }
 refreshStatus();
 setInterval(refreshStatus, 2000);
-
-// ---- チャットウィジェット ----
-const chatWidget = document.getElementById('chat-widget');
-const chatMessages = document.getElementById('chat-messages');
-const chatPending = document.getElementById('chat-pending');
-let lastChatCount = -1;
-
-document.getElementById('chat-toggle').addEventListener('click', () => {
-  chatWidget.classList.toggle('collapsed');
-  if (!chatWidget.classList.contains('collapsed')) refreshChat();
-});
-
-document.getElementById('chat-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const input = document.getElementById('chat-input');
-  const message = input.value.trim();
-  if (!message) return;
-  input.value = '';
-  await fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
-  });
-  refreshChat();
-});
-
-async function refreshChat() {
-  if (chatWidget.classList.contains('collapsed')) return;
-  const data = await fetchJSON('/api/chat');
-  const pending = data.messages.some(m => m.pending);
-  chatPending.hidden = !pending;
-  if (pending && !agentConnected) {
-    chatPending.textContent = '⚠ エージェントが接続していません。skill を起動すると回答されます。';
-    chatPending.classList.add('chat-pending-warn');
-  } else {
-    chatPending.textContent = 'エージェントが回答中…';
-    chatPending.classList.remove('chat-pending-warn');
-  }
-  if (data.messages.length === lastChatCount) return;
-  lastChatCount = data.messages.length;
-  chatMessages.innerHTML = data.messages.map(m => `
-    <div class="chat-msg chat-${m.role}">
-      <div class="chat-bubble">${esc(m.content)}</div>
-    </div>`).join('');
-  chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-setInterval(refreshChat, 2000);
