@@ -30,14 +30,3 @@ document.getElementById('btn-shutdown').addEventListener('click', async () => {
   await fetch('/api/shutdown', { method: 'POST' });
   alert('終了をリクエストしました。エージェントは次のポーリングで停止します。');
 });
-
-// ---- エージェント接続状態 ----
-async function refreshStatus() {
-  try {
-    const status = await fetchJSON('/api/status');
-    document.getElementById('agent-banner').hidden =
-      status.agent_connected || status.active_jobs === 0;
-  } catch { /* サーバー停止中はバナー判定不能なので何もしない */ }
-}
-refreshStatus();
-setInterval(refreshStatus, 2000);
