@@ -72,12 +72,16 @@ def page_admin(request: Request):
 
 @app.post("/api/upload")
 async def api_upload(files: list[UploadFile]):
+    # 1 件でも未対応形式があれば何も保存しない。ループ内で 400 を投げると
+    # 先行ファイルだけ登録済みなのにクライアントはエラーを見る、という状態になる
+    for f in files:
+        if (f.content_type or "") not in ALLOWED_MIMES:
+            raise HTTPException(400, f"未対応のファイル形式です: {f.filename} ({f.content_type})")
+
     created = []
     duplicates = []
     for f in files:
-        ext = ALLOWED_MIMES.get(f.content_type or "")
-        if ext is None:
-            raise HTTPException(400, f"未対応のファイル形式です: {f.filename} ({f.content_type})")
+        mime = f.content_type or ""
         data = await f.read()
         digest = hashlib.sha256(data).hexdigest()
         with db.get_conn() as conn:
@@ -88,19 +92,20 @@ async def api_upload(files: list[UploadFile]):
             if dup is not None:
                 duplicates.append({"filename": f.filename, "document_id": dup["id"]})
                 continue
-            stored = db.UPLOADS_DIR / f"{uuid.uuid4().hex}{ext}"
+            stored = db.UPLOADS_DIR / f"{uuid.uuid4().hex}{ALLOWED_MIMES[mime]}"
             stored.write_bytes(data)
             cur = conn.execute(
                 "INSERT INTO documents (filename, stored_path, content_hash, mime, schema_name, status)"
                 " VALUES (?, ?, ?, ?, ?, 'uploaded')",
-                (f.filename, str(stored), digest, f.content_type, DEFAULT_SCHEMA),
+                (f.filename, str(stored), digest, mime, DEFAULT_SCHEMA),
             )
             doc_id = cur.lastrowid
+            assert doc_id is not None  # INSERT 成功後は必ず入る
             payload = {
                 "document_id": doc_id,
                 "file_path": str(stored),
                 "original_filename": f.filename,
-                "mime": f.content_type,
+                "mime": mime,
                 "schema_name": DEFAULT_SCHEMA,
                 "schema": schemas.load_schema(DEFAULT_SCHEMA),
             }
@@ -109,7 +114,7 @@ async def api_upload(files: list[UploadFile]):
                 (json.dumps(payload, ensure_ascii=False),),
             )
         try:
-            pdf_render.render_previews(doc_id, stored, f.content_type)
+            pdf_render.render_previews(doc_id, stored, mime)
         except Exception as e:  # プレビュー失敗はレビュー継続を妨げない
             print(f"preview rendering failed for doc {doc_id}: {e}")
         created.append(doc_id)
@@ -162,12 +167,19 @@ async def api_confirm(document_id: int, request: Request):
             raise HTTPException(404)
         if doc["status"] not in ("awaiting_review", "confirmed"):
             raise HTTPException(409, "この文書はまだレビューできる状態ではありません")
+        # スキーマ外のキーは黙って捨てる (単一ユーザーのローカルアプリなので 400 にはしない)
+        allowed = {f["key"] for f in schemas.load_schema(doc["schema_name"])["fields"]}
+        fields = {k: v for k, v in fields.items() if k in allowed}
         for key, value in fields.items():
             row = conn.execute(
                 "SELECT value_extracted FROM extractions WHERE document_id = ? AND field_key = ?",
                 (document_id, key),
             ).fetchone()
-            corrected = value if (row is None or (row["value_extracted"] or "") != value) else None
+            # 抽出行が無いのは「抽出値が空」と同じ扱い。ここで value をそのまま入れると
+            # 未抽出フィールドを空欄で確定しただけで value_corrected = "" が残り、
+            # 精度指標 (value_corrected IS NOT NULL) が幻の修正を数えてしまう
+            extracted = (row["value_extracted"] or "") if row is not None else ""
+            corrected = value if extracted != value else None
             conn.execute(
                 """INSERT INTO extractions (document_id, field_key, value_corrected)
                    VALUES (?, ?, ?)
@@ -278,11 +290,16 @@ async def api_agent_next_job(wait: int = 230):
                 "SELECT * FROM jobs WHERE status = 'queued' ORDER BY id LIMIT 1"
             ).fetchone()
             if row is not None:
-                conn.execute(
+                # status = 'queued' を条件に含めることで、複数ワーカー構成でも
+                # 同じジョブを二重に取得しない (単一ワーカーなら常に成功する)
+                cur = conn.execute(
                     "UPDATE jobs SET status = 'running',"
-                    " updated_at = datetime('now', 'localtime') WHERE id = ?",
+                    " updated_at = datetime('now', 'localtime')"
+                    " WHERE id = ? AND status = 'queued'",
                     (row["id"],),
                 )
+                if cur.rowcount == 0:
+                    continue  # 他のワーカーに先を越された。取り直す
                 if row["type"] == "ocr":
                     doc_id = json.loads(row["payload_json"])["document_id"]
                     conn.execute(
@@ -351,6 +368,10 @@ async def api_agent_fail(job_id: int, request: Request):
         job = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         if job is None:
             raise HTTPException(404)
+        # complete と同じガード。これが無いと完了済みジョブを後から fail でき、
+        # 確定済みの文書が error に戻ってしまう
+        if job["status"] != "running":
+            raise HTTPException(409, f"job {job_id} is {job['status']}, not running")
         payload = json.loads(job["payload_json"])
         conn.execute(
             "UPDATE jobs SET status = 'error', result_json = ?,"
