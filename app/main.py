@@ -4,6 +4,7 @@ LLM は一切呼ばない。OCR はジョブキュー (jobs テーブル) に積
 Claude Code エージェントが scripts/poll.py 経由で処理して結果を POST してくる。
 """
 import asyncio
+import hashlib
 import json
 import uuid
 from pathlib import Path
@@ -71,17 +72,27 @@ def page_admin(request: Request):
 @app.post("/api/upload")
 async def api_upload(files: list[UploadFile]):
     created = []
+    duplicates = []
     for f in files:
         ext = ALLOWED_MIMES.get(f.content_type or "")
         if ext is None:
             raise HTTPException(400, f"未対応のファイル形式です: {f.filename} ({f.content_type})")
-        stored = db.UPLOADS_DIR / f"{uuid.uuid4().hex}{ext}"
-        stored.write_bytes(await f.read())
+        data = await f.read()
+        digest = hashlib.sha256(data).hexdigest()
         with db.get_conn() as conn:
+            # 同一内容が登録済みなら保存も OCR ジョブ投入もしない
+            dup = conn.execute(
+                "SELECT id FROM documents WHERE content_hash = ?", (digest,)
+            ).fetchone()
+            if dup is not None:
+                duplicates.append({"filename": f.filename, "document_id": dup["id"]})
+                continue
+            stored = db.UPLOADS_DIR / f"{uuid.uuid4().hex}{ext}"
+            stored.write_bytes(data)
             cur = conn.execute(
-                "INSERT INTO documents (filename, stored_path, mime, schema_name, status)"
-                " VALUES (?, ?, ?, ?, 'uploaded')",
-                (f.filename, str(stored), f.content_type, DEFAULT_SCHEMA),
+                "INSERT INTO documents (filename, stored_path, content_hash, mime, schema_name, status)"
+                " VALUES (?, ?, ?, ?, ?, 'uploaded')",
+                (f.filename, str(stored), digest, f.content_type, DEFAULT_SCHEMA),
             )
             doc_id = cur.lastrowid
             payload = {
@@ -101,7 +112,7 @@ async def api_upload(files: list[UploadFile]):
         except Exception as e:  # プレビュー失敗はレビュー継続を妨げない
             print(f"preview rendering failed for doc {doc_id}: {e}")
         created.append(doc_id)
-    return {"created": created}
+    return {"created": created, "duplicates": duplicates}
 
 
 @app.get("/api/documents")
