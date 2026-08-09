@@ -43,7 +43,11 @@ async function uploadFiles(files) {
   try {
     const res = await fetch('/api/upload', { method: 'POST', body: form });
     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
-    uploadStatus.textContent = 'アップロードしました。エージェントがOCRを開始します。';
+    const data = await res.json();
+    const parts = [];
+    if (data.created.length) parts.push(`${data.created.length}件アップロードしました。エージェントがOCRを開始します。`);
+    for (const d of data.duplicates) parts.push(`登録済みのためスキップ: ${esc(d.filename)} (ID: ${d.document_id})`);
+    uploadStatus.innerHTML = parts.join('<br>');
     fileInput.value = '';
     refreshDocs();
   } catch (err) {

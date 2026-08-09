@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS documents (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     filename TEXT NOT NULL,
     stored_path TEXT NOT NULL,
+    content_hash TEXT NOT NULL UNIQUE,
     mime TEXT NOT NULL,
     schema_name TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'uploaded',
