@@ -1,0 +1,20 @@
+#!/bin/sh
+# ruff によるコミット前チェック。緊急時は git commit --no-verify で回避可。
+set -e
+
+if ! command -v uv >/dev/null 2>&1; then
+    echo "pre-commit: uv が見つかりません。チェックをスキップします。" >&2
+    exit 0
+fi
+
+uv run ruff check . || {
+    echo "" >&2
+    echo "ruff check に失敗しました。'uv run ruff check --fix .' で自動修正できます。" >&2
+    exit 1
+}
+
+uv run ruff format --check . || {
+    echo "" >&2
+    echo "フォーマット未適用です。'uv run ruff format .' を実行してください。" >&2
+    exit 1
+}

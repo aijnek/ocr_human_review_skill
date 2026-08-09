@@ -3,6 +3,7 @@
 LLM は一切呼ばない。OCR はジョブキュー (jobs テーブル) に積み、
 Claude Code エージェントが scripts/poll.py 経由で処理して結果を POST してくる。
 """
+
 import asyncio
 import hashlib
 import json
@@ -41,6 +42,7 @@ def startup() -> None:
 
 # ---------------------------------------------------------------- pages
 
+
 @app.get("/")
 def page_index(request: Request):
     return templates.TemplateResponse(request, "index.html", {"page": "index"})
@@ -54,7 +56,8 @@ def page_review(request: Request, document_id: int):
         raise HTTPException(404)
     schema = schemas.load_schema(doc["schema_name"])
     return templates.TemplateResponse(
-        request, "review.html",
+        request,
+        "review.html",
         {"page": "review", "doc": dict(doc), "schema": schema},
     )
 
@@ -66,14 +69,19 @@ def page_admin(request: Request):
 
 # ---------------------------------------------------------------- upload & documents
 
+
 @app.post("/api/upload")
 async def api_upload(files: list[UploadFile]):
+    # 1 件でも未対応形式があれば何も保存しない。ループ内で 400 を投げると
+    # 先行ファイルだけ登録済みなのにクライアントはエラーを見る、という状態になる
+    for f in files:
+        if (f.content_type or "") not in ALLOWED_MIMES:
+            raise HTTPException(400, f"未対応のファイル形式です: {f.filename} ({f.content_type})")
+
     created = []
     duplicates = []
     for f in files:
-        ext = ALLOWED_MIMES.get(f.content_type or "")
-        if ext is None:
-            raise HTTPException(400, f"未対応のファイル形式です: {f.filename} ({f.content_type})")
+        mime = f.content_type or ""
         data = await f.read()
         digest = hashlib.sha256(data).hexdigest()
         with db.get_conn() as conn:
@@ -84,19 +92,20 @@ async def api_upload(files: list[UploadFile]):
             if dup is not None:
                 duplicates.append({"filename": f.filename, "document_id": dup["id"]})
                 continue
-            stored = db.UPLOADS_DIR / f"{uuid.uuid4().hex}{ext}"
+            stored = db.UPLOADS_DIR / f"{uuid.uuid4().hex}{ALLOWED_MIMES[mime]}"
             stored.write_bytes(data)
             cur = conn.execute(
                 "INSERT INTO documents (filename, stored_path, content_hash, mime, schema_name, status)"
                 " VALUES (?, ?, ?, ?, ?, 'uploaded')",
-                (f.filename, str(stored), digest, f.content_type, DEFAULT_SCHEMA),
+                (f.filename, str(stored), digest, mime, DEFAULT_SCHEMA),
             )
             doc_id = cur.lastrowid
+            assert doc_id is not None  # INSERT 成功後は必ず入る
             payload = {
                 "document_id": doc_id,
                 "file_path": str(stored),
                 "original_filename": f.filename,
-                "mime": f.content_type,
+                "mime": mime,
                 "schema_name": DEFAULT_SCHEMA,
                 "schema": schemas.load_schema(DEFAULT_SCHEMA),
             }
@@ -105,7 +114,7 @@ async def api_upload(files: list[UploadFile]):
                 (json.dumps(payload, ensure_ascii=False),),
             )
         try:
-            pdf_render.render_previews(doc_id, stored, f.content_type)
+            pdf_render.render_previews(doc_id, stored, mime)
         except Exception as e:  # プレビュー失敗はレビュー継続を妨げない
             print(f"preview rendering failed for doc {doc_id}: {e}")
         created.append(doc_id)
@@ -130,7 +139,8 @@ def api_document(document_id: int):
         ).fetchall()
     pages = sorted(
         (db.PREVIEWS_DIR / str(document_id)).glob("page_*.*")
-        if (db.PREVIEWS_DIR / str(document_id)).is_dir() else []
+        if (db.PREVIEWS_DIR / str(document_id)).is_dir()
+        else []
     )
     return {
         "document": dict(doc),
@@ -157,12 +167,19 @@ async def api_confirm(document_id: int, request: Request):
             raise HTTPException(404)
         if doc["status"] not in ("awaiting_review", "confirmed"):
             raise HTTPException(409, "この文書はまだレビューできる状態ではありません")
+        # スキーマ外のキーは黙って捨てる (単一ユーザーのローカルアプリなので 400 にはしない)
+        allowed = {f["key"] for f in schemas.load_schema(doc["schema_name"])["fields"]}
+        fields = {k: v for k, v in fields.items() if k in allowed}
         for key, value in fields.items():
             row = conn.execute(
                 "SELECT value_extracted FROM extractions WHERE document_id = ? AND field_key = ?",
                 (document_id, key),
             ).fetchone()
-            corrected = value if (row is None or (row["value_extracted"] or "") != value) else None
+            # 抽出行が無いのは「抽出値が空」と同じ扱い。ここで value をそのまま入れると
+            # 未抽出フィールドを空欄で確定しただけで value_corrected = "" が残り、
+            # 精度指標 (value_corrected IS NOT NULL) が幻の修正を数えてしまう
+            extracted = (row["value_extracted"] or "") if row is not None else ""
+            corrected = value if extracted != value else None
             conn.execute(
                 """INSERT INTO extractions (document_id, field_key, value_corrected)
                    VALUES (?, ?, ?)
@@ -188,13 +205,12 @@ async def api_confirm(document_id: int, request: Request):
                 (document_id, doc["schema_name"], data_json),
             )
             record_id = cur.lastrowid
-        conn.execute(
-            "UPDATE documents SET status = 'confirmed' WHERE id = ?", (document_id,)
-        )
+        conn.execute("UPDATE documents SET status = 'confirmed' WHERE id = ?", (document_id,))
     return {"record_id": record_id}
 
 
 # ---------------------------------------------------------------- admin (records CRUD)
+
 
 @app.get("/api/records")
 def api_records():
@@ -237,6 +253,7 @@ def api_record_delete(record_id: int):
 
 # ---------------------------------------------------------------- session control
 
+
 @app.post("/api/shutdown")
 def api_shutdown():
     global shutdown_requested
@@ -258,6 +275,25 @@ def api_status():
 
 # ---------------------------------------------------------------- agent API
 
+
+def _finish_job(conn, job_id: int, status: str, result: dict) -> None:
+    """running のジョブだけを終端状態に遷移させる。
+
+    status = 'running' を条件に含めるのは jobs/next の claim と同じ理由。
+    読んでから書くまでの間に他のワーカーが終端させていた場合に 409 を返す。
+    これが無いと complete と fail が競合し、確定済み文書が error に戻る。
+    """
+    cur = conn.execute(
+        "UPDATE jobs SET status = ?, result_json = ?,"
+        " updated_at = datetime('now', 'localtime')"
+        " WHERE id = ? AND status = 'running'",
+        (status, json.dumps(result, ensure_ascii=False), job_id),
+    )
+    if cur.rowcount == 0:
+        row = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        raise HTTPException(409, f"job {job_id} is {row['status']}, not running")
+
+
 @app.get("/api/agent/jobs/next")
 async def api_agent_next_job(wait: int = 230):
     global shutdown_requested
@@ -272,25 +308,31 @@ async def api_agent_next_job(wait: int = 230):
                 "SELECT * FROM jobs WHERE status = 'queued' ORDER BY id LIMIT 1"
             ).fetchone()
             if row is not None:
-                conn.execute(
+                # status = 'queued' を条件に含めることで、複数ワーカー構成でも
+                # 同じジョブを二重に取得しない (単一ワーカーなら常に成功する)
+                cur = conn.execute(
                     "UPDATE jobs SET status = 'running',"
-                    " updated_at = datetime('now', 'localtime') WHERE id = ?",
+                    " updated_at = datetime('now', 'localtime')"
+                    " WHERE id = ? AND status = 'queued'",
                     (row["id"],),
                 )
-                if row["type"] == "ocr":
-                    doc_id = json.loads(row["payload_json"])["document_id"]
-                    conn.execute(
-                        "UPDATE documents SET status = 'ocr_running' WHERE id = ?",
-                        (doc_id,),
-                    )
-                return {
-                    "status": "job",
-                    "job": {
-                        "id": row["id"],
-                        "type": row["type"],
-                        "payload": json.loads(row["payload_json"]),
-                    },
-                }
+                # 負けた場合は下の deadline/sleep を通す。continue で先頭に
+                # 戻すと wait を超えて回り続け、イベントループにも譲らない
+                if cur.rowcount:
+                    if row["type"] == "ocr":
+                        doc_id = json.loads(row["payload_json"])["document_id"]
+                        conn.execute(
+                            "UPDATE documents SET status = 'ocr_running' WHERE id = ?",
+                            (doc_id,),
+                        )
+                    return {
+                        "status": "job",
+                        "job": {
+                            "id": row["id"],
+                            "type": row["type"],
+                            "payload": json.loads(row["payload_json"]),
+                        },
+                    }
         if asyncio.get_event_loop().time() >= deadline:
             return {"status": "timeout"}
         await asyncio.sleep(0.5)
@@ -303,8 +345,6 @@ async def api_agent_complete(job_id: int, request: Request):
         job = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         if job is None:
             raise HTTPException(404)
-        if job["status"] != "running":
-            raise HTTPException(409, f"job {job_id} is {job['status']}, not running")
         payload = json.loads(job["payload_json"])
 
         if job["type"] == "ocr":
@@ -329,11 +369,9 @@ async def api_agent_complete(job_id: int, request: Request):
                 (doc_id,),
             )
 
-        conn.execute(
-            "UPDATE jobs SET status = 'done', result_json = ?,"
-            " updated_at = datetime('now', 'localtime') WHERE id = ?",
-            (json.dumps(result, ensure_ascii=False), job_id),
-        )
+        # 最後に置く。CAS に負けた場合は 409 で例外が飛び、上の書き込みごと
+        # トランザクションが巻き戻る
+        _finish_job(conn, job_id, "done", result)
     return {"ok": True}
 
 
@@ -346,11 +384,7 @@ async def api_agent_fail(job_id: int, request: Request):
         if job is None:
             raise HTTPException(404)
         payload = json.loads(job["payload_json"])
-        conn.execute(
-            "UPDATE jobs SET status = 'error', result_json = ?,"
-            " updated_at = datetime('now', 'localtime') WHERE id = ?",
-            (json.dumps({"error": error}, ensure_ascii=False), job_id),
-        )
+        _finish_job(conn, job_id, "error", {"error": error})
         if job["type"] == "ocr":
             conn.execute(
                 "UPDATE documents SET status = 'error', error = ? WHERE id = ?",

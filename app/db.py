@@ -1,9 +1,13 @@
 """SQLite の初期化と接続管理。"""
+
+import os
 import sqlite3
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = PROJECT_ROOT / "data"
+# OCR_DATA_DIR で保存先を差し替えられる (テストの隔離、使い捨てのデモ環境)。
+# import 時に評価されるので、差し替えるなら app.db の import より前に設定すること。
+DATA_DIR = Path(os.environ.get("OCR_DATA_DIR") or PROJECT_ROOT / "data")
 UPLOADS_DIR = DATA_DIR / "uploads"
 PREVIEWS_DIR = DATA_DIR / "previews"
 DB_PATH = DATA_DIR / "app.db"
@@ -55,7 +59,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 
 def init_db() -> None:
-    DATA_DIR.mkdir(exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     UPLOADS_DIR.mkdir(exist_ok=True)
     PREVIEWS_DIR.mkdir(exist_ok=True)
     with get_conn() as conn:

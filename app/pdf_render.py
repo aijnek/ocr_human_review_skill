@@ -1,9 +1,10 @@
 """PDF をレビュー画面用のページ PNG に変換する (PyMuPDF)。"""
+
 from pathlib import Path
 
 import pymupdf
 
-from .db import PREVIEWS_DIR
+from . import db
 
 MAX_PAGES = 10
 DPI = 150
@@ -11,7 +12,7 @@ DPI = 150
 
 def render_previews(document_id: int, source: Path, mime: str) -> int:
     """プレビュー画像を data/previews/{doc_id}/page_{n}.png に生成し、ページ数を返す。"""
-    out_dir = PREVIEWS_DIR / str(document_id)
+    out_dir = db.PREVIEWS_DIR / str(document_id)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if mime == "application/pdf":
@@ -29,7 +30,7 @@ def render_previews(document_id: int, source: Path, mime: str) -> int:
 
 
 def preview_page_path(document_id: int, page: int) -> Path | None:
-    out_dir = PREVIEWS_DIR / str(document_id)
+    out_dir = db.PREVIEWS_DIR / str(document_id)
     if not out_dir.is_dir():
         return None
     matches = list(out_dir.glob(f"page_{page}.*"))

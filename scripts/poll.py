@@ -10,6 +10,7 @@
     {"status": "shutdown"}           # UI から終了指示。ループを抜ける
     {"status": "server_unreachable"} # サーバー未起動/停止
 """
+
 import argparse
 import json
 import urllib.error
