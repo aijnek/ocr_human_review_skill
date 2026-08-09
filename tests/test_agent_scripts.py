@@ -8,9 +8,8 @@ import json
 import socket
 import subprocess
 import time
-import urllib.error
-import urllib.request
 
+import httpx
 import pytest
 
 from app import db
@@ -50,9 +49,9 @@ def server(tmp_path_factory):
         if proc.poll() is not None:
             raise RuntimeError("uvicorn が起動前に終了した")
         try:
-            urllib.request.urlopen(f"{base}/api/status", timeout=1).read()
+            httpx.get(f"{base}/api/status", timeout=1)
             break
-        except (urllib.error.URLError, TimeoutError, ConnectionError):
+        except httpx.TransportError:
             time.sleep(0.2)
     else:
         proc.terminate()
@@ -80,13 +79,10 @@ def test_poll_reports_timeout_on_empty_queue(server):
 
 @pytest.mark.subprocess
 def test_poll_and_complete_round_trip(server):
-    urllib.request.urlopen(
-        urllib.request.Request(
-            f"{server}/api/upload",
-            data=_multipart(SAMPLE_PDF.name, SAMPLE_PDF.read_bytes(), "application/pdf"),
-            headers={"Content-Type": f"multipart/form-data; boundary={_BOUNDARY}"},
-        )
-    ).read()
+    httpx.post(
+        f"{server}/api/upload",
+        files={"files": (SAMPLE_PDF.name, SAMPLE_PDF.read_bytes(), "application/pdf")},
+    ).raise_for_status()
 
     polled = json.loads(run_script("poll.py", "--timeout", "0", "--base-url", server).stdout)
     assert polled["status"] == "job"
@@ -102,7 +98,7 @@ def test_poll_and_complete_round_trip(server):
         text=True,
     )
     assert done.returncode == 0, done.stderr
-    detail = json.loads(urllib.request.urlopen(f"{server}/api/documents/{doc_id}").read())
+    detail = httpx.get(f"{server}/api/documents/{doc_id}").json()
     assert detail["document"]["status"] == "awaiting_review"
 
     # 二重報告は非ゼロ終了。エージェントが拒否に気づけないと結果を取りこぼす
@@ -115,18 +111,3 @@ def test_poll_and_complete_round_trip(server):
     )
     assert again.returncode == 1
     assert "409" in again.stdout or "not running" in again.stdout
-
-
-_BOUNDARY = "----ocrtestboundary"
-
-
-def _multipart(filename, content, mime):
-    return b"".join(
-        [
-            f"--{_BOUNDARY}\r\n".encode(),
-            f'Content-Disposition: form-data; name="files"; filename="{filename}"\r\n'.encode(),
-            f"Content-Type: {mime}\r\n\r\n".encode(),
-            content,
-            f"\r\n--{_BOUNDARY}--\r\n".encode(),
-        ]
-    )
