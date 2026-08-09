@@ -1,4 +1,5 @@
 """抽出スキーマ (schemas/*.yaml) のローダー。"""
+
 from pathlib import Path
 
 import yaml

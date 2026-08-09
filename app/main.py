@@ -3,6 +3,7 @@
 LLM は一切呼ばない。OCR はジョブキュー (jobs テーブル) に積み、
 Claude Code エージェントが scripts/poll.py 経由で処理して結果を POST してくる。
 """
+
 import asyncio
 import hashlib
 import json
@@ -41,6 +42,7 @@ def startup() -> None:
 
 # ---------------------------------------------------------------- pages
 
+
 @app.get("/")
 def page_index(request: Request):
     return templates.TemplateResponse(request, "index.html", {"page": "index"})
@@ -54,7 +56,8 @@ def page_review(request: Request, document_id: int):
         raise HTTPException(404)
     schema = schemas.load_schema(doc["schema_name"])
     return templates.TemplateResponse(
-        request, "review.html",
+        request,
+        "review.html",
         {"page": "review", "doc": dict(doc), "schema": schema},
     )
 
@@ -65,6 +68,7 @@ def page_admin(request: Request):
 
 
 # ---------------------------------------------------------------- upload & documents
+
 
 @app.post("/api/upload")
 async def api_upload(files: list[UploadFile]):
@@ -130,7 +134,8 @@ def api_document(document_id: int):
         ).fetchall()
     pages = sorted(
         (db.PREVIEWS_DIR / str(document_id)).glob("page_*.*")
-        if (db.PREVIEWS_DIR / str(document_id)).is_dir() else []
+        if (db.PREVIEWS_DIR / str(document_id)).is_dir()
+        else []
     )
     return {
         "document": dict(doc),
@@ -188,13 +193,12 @@ async def api_confirm(document_id: int, request: Request):
                 (document_id, doc["schema_name"], data_json),
             )
             record_id = cur.lastrowid
-        conn.execute(
-            "UPDATE documents SET status = 'confirmed' WHERE id = ?", (document_id,)
-        )
+        conn.execute("UPDATE documents SET status = 'confirmed' WHERE id = ?", (document_id,))
     return {"record_id": record_id}
 
 
 # ---------------------------------------------------------------- admin (records CRUD)
+
 
 @app.get("/api/records")
 def api_records():
@@ -237,6 +241,7 @@ def api_record_delete(record_id: int):
 
 # ---------------------------------------------------------------- session control
 
+
 @app.post("/api/shutdown")
 def api_shutdown():
     global shutdown_requested
@@ -257,6 +262,7 @@ def api_status():
 
 
 # ---------------------------------------------------------------- agent API
+
 
 @app.get("/api/agent/jobs/next")
 async def api_agent_next_job(wait: int = 230):

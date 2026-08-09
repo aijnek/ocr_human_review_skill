@@ -9,6 +9,7 @@ result.json の形式:
     {"fields": {"<field_key>": {"value": "...", "confidence": 0.95,
                                 "evidence": "根拠となる原文"}, ...}}
 """
+
 import argparse
 import json
 import sys

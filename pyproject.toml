@@ -12,3 +12,20 @@ dependencies = [
     "reportlab>=5.0.0",
     "uvicorn>=0.52.1",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.9",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+    "E501",                        # 日本語行は文字数≠表示幅で無意味。format に任せる
+    "RUF001", "RUF002", "RUF003",  # ambiguous-unicode。全角スペース/コロンで大量誤検知
+]

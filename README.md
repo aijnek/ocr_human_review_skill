@@ -67,6 +67,25 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8765
 
 エージェントワーカーの代わりは `scripts/poll.py` / `scripts/complete.py` を参照。
 
+## 開発
+
+```bash
+uv sync                                # 依存 (dev グループ含む) をインストール
+git config core.hooksPath .githooks    # clone ごとに一度。ruff の pre-commit hook を有効化
+uv run pytest                          # テスト
+uv run ruff check . && uv run ruff format .
+```
+
+pre-commit hook は ruff の lint とフォーマットを検査するだけで、ファイルの自動修正はしない。
+緊急時は `git commit --no-verify` で回避できる (CI 側でも同じ検査が走る)。
+
+`OCR_DATA_DIR` を設定すると `data/` の代わりに任意のディレクトリを使う。テストはこれで
+実データから隔離している。使い捨てのデモ環境にも使える:
+
+```bash
+OCR_DATA_DIR=/tmp/ocr-demo uv run uvicorn app.main:app --port 8765
+```
+
 ## 構成
 
 | パス | 役割 |

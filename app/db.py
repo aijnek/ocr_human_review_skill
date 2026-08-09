@@ -1,4 +1,5 @@
 """SQLite の初期化と接続管理。"""
+
 import sqlite3
 from pathlib import Path
 

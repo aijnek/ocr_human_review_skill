@@ -1,4 +1,5 @@
 """PDF をレビュー画面用のページ PNG に変換する (PyMuPDF)。"""
+
 from pathlib import Path
 
 import pymupdf
