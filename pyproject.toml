@@ -15,8 +15,16 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28",  # starlette の TestClient が要求する
+    "pytest>=8.3",
     "ruff>=0.9",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]  # app/ は __init__.py を持たない名前空間パッケージなので必須
+addopts = "-q --strict-markers"
+markers = ["subprocess: 実 uvicorn を起動する (低速)"]
 
 [tool.ruff]
 line-length = 100
