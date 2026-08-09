@@ -276,6 +276,24 @@ def api_status():
 # ---------------------------------------------------------------- agent API
 
 
+def _finish_job(conn, job_id: int, status: str, result: dict) -> None:
+    """running のジョブだけを終端状態に遷移させる。
+
+    status = 'running' を条件に含めるのは jobs/next の claim と同じ理由。
+    読んでから書くまでの間に他のワーカーが終端させていた場合に 409 を返す。
+    これが無いと complete と fail が競合し、確定済み文書が error に戻る。
+    """
+    cur = conn.execute(
+        "UPDATE jobs SET status = ?, result_json = ?,"
+        " updated_at = datetime('now', 'localtime')"
+        " WHERE id = ? AND status = 'running'",
+        (status, json.dumps(result, ensure_ascii=False), job_id),
+    )
+    if cur.rowcount == 0:
+        row = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        raise HTTPException(409, f"job {job_id} is {row['status']}, not running")
+
+
 @app.get("/api/agent/jobs/next")
 async def api_agent_next_job(wait: int = 230):
     global shutdown_requested
@@ -298,22 +316,23 @@ async def api_agent_next_job(wait: int = 230):
                     " WHERE id = ? AND status = 'queued'",
                     (row["id"],),
                 )
-                if cur.rowcount == 0:
-                    continue  # 他のワーカーに先を越された。取り直す
-                if row["type"] == "ocr":
-                    doc_id = json.loads(row["payload_json"])["document_id"]
-                    conn.execute(
-                        "UPDATE documents SET status = 'ocr_running' WHERE id = ?",
-                        (doc_id,),
-                    )
-                return {
-                    "status": "job",
-                    "job": {
-                        "id": row["id"],
-                        "type": row["type"],
-                        "payload": json.loads(row["payload_json"]),
-                    },
-                }
+                # 負けた場合は下の deadline/sleep を通す。continue で先頭に
+                # 戻すと wait を超えて回り続け、イベントループにも譲らない
+                if cur.rowcount:
+                    if row["type"] == "ocr":
+                        doc_id = json.loads(row["payload_json"])["document_id"]
+                        conn.execute(
+                            "UPDATE documents SET status = 'ocr_running' WHERE id = ?",
+                            (doc_id,),
+                        )
+                    return {
+                        "status": "job",
+                        "job": {
+                            "id": row["id"],
+                            "type": row["type"],
+                            "payload": json.loads(row["payload_json"]),
+                        },
+                    }
         if asyncio.get_event_loop().time() >= deadline:
             return {"status": "timeout"}
         await asyncio.sleep(0.5)
@@ -326,8 +345,6 @@ async def api_agent_complete(job_id: int, request: Request):
         job = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         if job is None:
             raise HTTPException(404)
-        if job["status"] != "running":
-            raise HTTPException(409, f"job {job_id} is {job['status']}, not running")
         payload = json.loads(job["payload_json"])
 
         if job["type"] == "ocr":
@@ -352,11 +369,9 @@ async def api_agent_complete(job_id: int, request: Request):
                 (doc_id,),
             )
 
-        conn.execute(
-            "UPDATE jobs SET status = 'done', result_json = ?,"
-            " updated_at = datetime('now', 'localtime') WHERE id = ?",
-            (json.dumps(result, ensure_ascii=False), job_id),
-        )
+        # 最後に置く。CAS に負けた場合は 409 で例外が飛び、上の書き込みごと
+        # トランザクションが巻き戻る
+        _finish_job(conn, job_id, "done", result)
     return {"ok": True}
 
 
@@ -368,16 +383,8 @@ async def api_agent_fail(job_id: int, request: Request):
         job = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         if job is None:
             raise HTTPException(404)
-        # complete と同じガード。これが無いと完了済みジョブを後から fail でき、
-        # 確定済みの文書が error に戻ってしまう
-        if job["status"] != "running":
-            raise HTTPException(409, f"job {job_id} is {job['status']}, not running")
         payload = json.loads(job["payload_json"])
-        conn.execute(
-            "UPDATE jobs SET status = 'error', result_json = ?,"
-            " updated_at = datetime('now', 'localtime') WHERE id = ?",
-            (json.dumps({"error": error}, ensure_ascii=False), job_id),
-        )
+        _finish_job(conn, job_id, "error", {"error": error})
         if job["type"] == "ocr":
             conn.execute(
                 "UPDATE documents SET status = 'error', error = ? WHERE id = ?",

@@ -2,7 +2,7 @@
 
 import json
 
-from tests.conftest import SAMPLE_PDF, count, document_status, job_status, upload
+from tests.conftest import SAMPLE_PDF, count, document_status, extraction, job_status, upload
 
 OCR_RESULT = {
     "fields": {
@@ -57,10 +57,17 @@ def test_full_arc_upload_to_confirmed(client):
 
 
 def test_double_complete_is_rejected(client, claimed):
-    _, job_id = claimed
+    doc_id, job_id = claimed
     assert client.post(f"/api/agent/jobs/{job_id}/complete", json=OCR_RESULT).status_code == 200
-    res = client.post(f"/api/agent/jobs/{job_id}/complete", json=OCR_RESULT)
+
+    # 二度目は別の値で送る。complete は抽出結果を書いてから最後にジョブを
+    # 終端させるので、409 で弾くだけでなく書き込みごと巻き戻る必要がある
+    res = client.post(
+        f"/api/agent/jobs/{job_id}/complete",
+        json={"fields": {"person_name": {"value": "別人", "confidence": 0.1}}},
+    )
     assert res.status_code == 409
+    assert extraction(doc_id, "person_name")["value_extracted"] == "田中太郎"
 
 
 def test_fail_after_done_is_rejected(client, claimed):
